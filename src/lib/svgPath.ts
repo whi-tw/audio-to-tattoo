@@ -103,7 +103,7 @@ export function buildSVGString(
   height: number = SVG_HEIGHT
 ): string {
   const path = buildWaveformPath(amplitudes, width, smoothing, height);
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">
   <rect width="${width}" height="${height}" fill="white"/>
   <path d="${path}" fill="none" stroke="black" stroke-width="${strokeWidth}" stroke-linejoin="round" stroke-linecap="round"/>
 </svg>`;
