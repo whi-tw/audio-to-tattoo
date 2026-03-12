@@ -96,6 +96,17 @@ export function Instructions({ onClose }: InstructionsProps) {
             </dl>
           </section>
 
+          {/* Preview & export */}
+          <section>
+            <h3 className="font-semibold text-gray-900 mb-2">Preview & export</h3>
+            <ul className="flex flex-col gap-1.5">
+              <li><Kbd>click</Kbd> the preview to open it full-size — useful for checking detail without scrolling</li>
+              <li><Kbd>click</Kbd> outside or press <Kbd>Escape</Kbd> to close the full-size view</li>
+              <li>Use <strong>Download SVG</strong> for a scalable vector file (maybe useful for a tattoo artist?)</li>
+              <li>Use <strong>Download PNG</strong> for a high-resolution raster image</li>
+            </ul>
+          </section>
+
         </div>
       </div>
     </div>
