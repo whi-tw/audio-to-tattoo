@@ -95,7 +95,7 @@ export function ControlsPanel({ controls, onChange }: ControlsPanelProps) {
         value={controls.strokeWidth}
         min={0}
         max={20}
-        step={0.5}
+        step={0.01}
         onChange={update("strokeWidth")}
       />
       <Slider

@@ -13,7 +13,7 @@ import { Instructions } from "@/components/Instructions";
 const DEFAULT_CONTROLS: Controls = {
   numSamples: 200,
   imageWidth: 840,
-  imageHeight: 200,
+  imageHeight: 300,
   strokeWidth: 2,
   smoothing: 0,
   offset: 0,
