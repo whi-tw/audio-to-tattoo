@@ -9,8 +9,8 @@ const OVERVIEW_SAMPLES = 300;
 const OVERVIEW_WIDTH = 800;
 const MIN_SPAN_SEC = 0.05;
 const DESELECT_PX_THRESHOLD = 4;
-const HANDLE_HIT_PX = 10; // px radius for grabbing a handle edge
-const ZOOM_STEP = 2; // factor for button zoom
+const HANDLE_HIT_PX = 28; // larger hit target for touch
+const ZOOM_STEP = 2;
 
 interface RangeSelectorProps {
   audioBuffer: AudioBuffer;
@@ -24,11 +24,9 @@ export function RangeSelector({ audioBuffer, audioCtx, rangeStart, rangeEnd, onR
   const duration = audioBuffer.duration;
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Zoom window — what slice of the audio is visible
   const [viewStart, setViewStart] = useState(0);
   const [viewEnd, setViewEnd] = useState(duration);
 
-  // Reset view when a new file is loaded
   useEffect(() => {
     setViewStart(0);
     setViewEnd(duration);
@@ -36,7 +34,6 @@ export function RangeSelector({ audioBuffer, audioCtx, rangeStart, rangeEnd, onR
 
   const [cursor, setCursor] = useState<string>('crosshair');
 
-  // Waveform for the current view window
   const overviewAmplitudes = useMemo(() => {
     const mono = mixToMono(audioBuffer);
     const sliced = sliceRange(mono, viewStart, viewEnd, audioBuffer.sampleRate);
@@ -55,22 +52,14 @@ export function RangeSelector({ audioBuffer, audioCtx, rangeStart, rangeEnd, onR
     return viewStart + frac * (viewEnd - viewStart);
   }, [viewStart, viewEnd]);
 
-  // Time → 0–100% across the container (for positioning)
   const timeToPct = (t: number) => ((t - viewStart) / (viewEnd - viewStart)) * 100;
-
   const clampToView = (t: number) => Math.max(viewStart, Math.min(viewEnd, t));
 
   // --- Zoom ---
 
   const applyZoom = useCallback((factor: number, centreTime: number) => {
-    setViewStart(prev => {
-      const vs = centreTime - (centreTime - prev) * factor;
-      return Math.max(0, vs);
-    });
-    setViewEnd(prev => {
-      const ve = centreTime + (prev - centreTime) * factor;
-      return Math.min(duration, ve);
-    });
+    setViewStart(prev => Math.max(0, centreTime - (centreTime - prev) * factor));
+    setViewEnd(prev => Math.min(duration, centreTime + (prev - centreTime) * factor));
   }, [duration]);
 
   // Attach wheel as non-passive so preventDefault() actually blocks browser zoom/scroll
@@ -81,7 +70,6 @@ export function RangeSelector({ audioBuffer, audioCtx, rangeStart, rangeEnd, onR
       e.preventDefault();
       const span = viewEnd - viewStart;
 
-      // Horizontal swipe (trackpad) or shift+scroll → pan
       if (e.deltaX !== 0 || e.shiftKey) {
         const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
         const panSec = (delta / el.getBoundingClientRect().width) * span;
@@ -91,7 +79,6 @@ export function RangeSelector({ audioBuffer, audioCtx, rangeStart, rangeEnd, onR
         return;
       }
 
-      // Vertical scroll / pinch → zoom
       const sensitivity = e.ctrlKey ? 0.01 : 0.001;
       const factor = Math.exp(e.deltaY * sensitivity);
       const rect = el.getBoundingClientRect();
@@ -139,19 +126,21 @@ export function RangeSelector({ audioBuffer, audioCtx, rangeStart, rangeEnd, onR
   const dragRef = useRef<{
     mode: DragMode;
     startX: number;
-    anchor: number;         // time at pointerdown
+    anchor: number;
     initRangeStart: number;
     initRangeEnd: number;
   } | null>(null);
 
-  /** Pixel x of a time value within the container. */
+  // Track all active pointers for pinch detection
+  const activePointersRef = useRef<Map<number, number>>(new Map()); // pointerId → clientX
+  const pinchRef = useRef<{ dist: number; viewStart: number; viewEnd: number; centreTime: number } | null>(null);
+
   const timeToContainerX = useCallback((t: number): number => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return 0;
     return ((t - viewStart) / (viewEnd - viewStart)) * rect.width;
   }, [viewStart, viewEnd]);
 
-  /** Which drag mode applies to a mouse clientX, given current selection. */
   const hitMode = useCallback((clientX: number): DragMode => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return 'select';
@@ -169,6 +158,22 @@ export function RangeSelector({ audioBuffer, audioCtx, rangeStart, rangeEnd, onR
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+    activePointersRef.current.set(e.pointerId, e.clientX);
+
+    // If a second pointer arrives, switch to pinch mode
+    if (activePointersRef.current.size === 2) {
+      dragRef.current = null;
+      const xs = Array.from(activePointersRef.current.values());
+      const dist = Math.abs(xs[1] - xs[0]);
+      const rect = containerRef.current?.getBoundingClientRect();
+      const centreX = rect ? (xs[0] + xs[1]) / 2 - rect.left : 0;
+      const span = viewEnd - viewStart;
+      const centreTime = viewStart + (centreX / (rect?.width ?? 1)) * span;
+      pinchRef.current = { dist, viewStart, viewEnd, centreTime };
+      return;
+    }
+
+    pinchRef.current = null;
     const mode = hitMode(e.clientX);
     dragRef.current = {
       mode,
@@ -177,13 +182,30 @@ export function RangeSelector({ audioBuffer, audioCtx, rangeStart, rangeEnd, onR
       initRangeStart: rangeStart,
       initRangeEnd: rangeEnd,
     };
-  }, [hitMode, xToTime, rangeStart, rangeEnd]);
+  }, [hitMode, xToTime, rangeStart, rangeEnd, viewStart, viewEnd]);
 
   const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    activePointersRef.current.set(e.pointerId, e.clientX);
+
+    // Pinch-to-zoom
+    if (pinchRef.current && activePointersRef.current.size === 2) {
+      const xs = Array.from(activePointersRef.current.values());
+      const newDist = Math.abs(xs[1] - xs[0]);
+      const { dist: startDist, viewStart: vs, viewEnd: ve, centreTime } = pinchRef.current;
+      if (newDist < 1) return;
+      const factor = startDist / newDist; // shrink distance → zoom in
+      const newSpan = (ve - vs) * factor;
+      if (newSpan < MIN_SPAN_SEC || newSpan > duration) return;
+      const newVs = Math.max(0, centreTime - (centreTime - vs) * factor);
+      const newVe = Math.min(duration, centreTime + (ve - centreTime) * factor);
+      setViewStart(newVs);
+      setViewEnd(newVe);
+      return;
+    }
+
     const drag = dragRef.current;
     const t = xToTime(e.clientX);
 
-    // Update cursor hint when idle
     if (!drag) {
       const mode = hitMode(e.clientX);
       if (mode === 'resize-start' || mode === 'resize-end') setCursor('ew-resize');
@@ -203,22 +225,22 @@ export function RangeSelector({ audioBuffer, audioCtx, rangeStart, rangeEnd, onR
       const newEnd = Math.max(clampToView(t), drag.initRangeStart + MIN_SPAN_SEC);
       onRangeChange(drag.initRangeStart, newEnd);
     } else {
-      // move: shift whole selection by delta from anchor
       const delta = t - drag.anchor;
       const span = drag.initRangeEnd - drag.initRangeStart;
       const newStart = Math.max(viewStart, Math.min(viewEnd - span, drag.initRangeStart + delta));
       onRangeChange(newStart, newStart + span);
     }
-  }, [xToTime, hitMode, viewStart, viewEnd, onRangeChange, clampToView]);
+  }, [xToTime, hitMode, viewStart, viewEnd, duration, onRangeChange, clampToView]);
 
   const onPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
+    activePointersRef.current.delete(e.pointerId);
+    pinchRef.current = null;
     dragRef.current = null;
-    if (!drag) return;
 
+    if (!drag) return;
     const draggedPx = Math.abs(e.clientX - drag.startX);
     if (drag.mode === 'select' && draggedPx < DESELECT_PX_THRESHOLD) {
-      // Click with no drag → clear selection
       onRangeChange(0, 0);
     }
   }, [onRangeChange]);
@@ -229,7 +251,6 @@ export function RangeSelector({ audioBuffer, audioCtx, rangeStart, rangeEnd, onR
   const startSvgX = (startPct / 100) * OVERVIEW_WIDTH;
   const endSvgX = (endPct / 100) * OVERVIEW_WIDTH;
 
-  // Clamp for rendering (handles may be out of view while zoomed)
   const visibleStart = Math.max(0, startPct);
   const visibleEnd = Math.min(100, endPct);
   const hasSelection = rangeEnd > rangeStart;
@@ -247,17 +268,17 @@ export function RangeSelector({ audioBuffer, audioCtx, rangeStart, rangeEnd, onR
           <button
             onClick={zoomIn}
             title="Zoom in"
-            className="w-6 h-6 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded flex items-center justify-center leading-none"
+            className="w-8 h-8 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded flex items-center justify-center leading-none"
           >+</button>
           <button
             onClick={zoomOut}
             title="Zoom out"
-            className="w-6 h-6 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded flex items-center justify-center leading-none"
+            className="w-8 h-8 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded flex items-center justify-center leading-none"
           >−</button>
           <button
             onClick={resetZoom}
             title="Reset zoom"
-            className="px-2 h-6 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded"
+            className="px-2 h-8 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded"
           >Reset</button>
         </div>
       </div>
@@ -266,10 +287,11 @@ export function RangeSelector({ audioBuffer, audioCtx, rangeStart, rangeEnd, onR
       <div
         ref={containerRef}
         className="relative w-full overflow-hidden rounded bg-white border border-gray-200 select-none"
-        style={{ height: 80, cursor }}
+        style={{ height: 80, cursor, touchAction: 'none' }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
       >
         <svg
           viewBox={`0 0 ${OVERVIEW_WIDTH} ${SVG_HEIGHT}`}
@@ -277,11 +299,9 @@ export function RangeSelector({ audioBuffer, audioCtx, rangeStart, rangeEnd, onR
           className="w-full h-full"
           style={{ pointerEvents: 'none' }}
         >
-          {/* Waveform */}
           <rect width={OVERVIEW_WIDTH} height={SVG_HEIGHT} fill="white" />
           <path d={overviewPath} fill="#374151" stroke="#374151" strokeWidth={1} />
 
-          {/* Unselected dim overlays */}
           {hasSelection && visibleStart > 0 && (
             <rect x={0} y={0} width={(visibleStart / 100) * OVERVIEW_WIDTH} height={SVG_HEIGHT} fill="white" opacity={0.65} />
           )}
@@ -293,17 +313,17 @@ export function RangeSelector({ audioBuffer, audioCtx, rangeStart, rangeEnd, onR
             />
           )}
 
-          {/* Selection boundary lines + handle ticks */}
+          {/* Handles: larger touch target via invisible wide rect + visible line + triangle */}
           {hasSelection && startPct >= 0 && startPct <= 100 && (
             <>
               <line x1={startSvgX} y1={0} x2={startSvgX} y2={SVG_HEIGHT} stroke="#1d4ed8" strokeWidth={2} />
-              <polygon points={`${startSvgX - 6},0 ${startSvgX + 6},0 ${startSvgX},12`} fill="#1d4ed8" />
+              <polygon points={`${startSvgX - 10},0 ${startSvgX + 10},0 ${startSvgX},18`} fill="#1d4ed8" />
             </>
           )}
           {hasSelection && endPct >= 0 && endPct <= 100 && (
             <>
               <line x1={endSvgX} y1={0} x2={endSvgX} y2={SVG_HEIGHT} stroke="#1d4ed8" strokeWidth={2} />
-              <polygon points={`${endSvgX - 6},0 ${endSvgX + 6},0 ${endSvgX},12`} fill="#1d4ed8" />
+              <polygon points={`${endSvgX - 10},0 ${endSvgX + 10},0 ${endSvgX},18`} fill="#1d4ed8" />
             </>
           )}
         </svg>

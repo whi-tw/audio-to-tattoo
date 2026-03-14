@@ -99,3 +99,7 @@ Open http://localhost:3000, load the test MP3.
 ## Deploying
 
 Push to a GitHub repo and connect to Vercel. Zero config needed — Vercel auto-detects Next.js.
+
+# Includes
+
+@AGENTS.md
