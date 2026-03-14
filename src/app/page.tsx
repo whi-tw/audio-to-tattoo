@@ -20,7 +20,7 @@ const DEFAULT_CONTROLS: Controls = {
 };
 
 export default function Home() {
-  const { audioBuffer, isLoading, error, fileName, decode, audioCtx } =
+  const { audioBuffer, isLoading, loadingStatus, error, fileName, decode, audioCtx } =
     useAudioDecoder();
 
   const [rangeStart, setRangeStart] = useState(0);
@@ -74,6 +74,7 @@ export default function Home() {
         <FilePicker
           onFileSelected={handleFileSelected}
           isLoading={isLoading}
+          loadingStatus={loadingStatus}
           error={error}
           fileName={fileName}
           audioDuration={audioBuffer?.duration ?? null}

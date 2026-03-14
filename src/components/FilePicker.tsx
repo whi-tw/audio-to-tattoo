@@ -5,12 +5,13 @@ import { useRef } from 'react';
 interface FilePickerProps {
   onFileSelected: (file: File) => void;
   isLoading: boolean;
+  loadingStatus: string | null;
   error: string | null;
   fileName: string | null;
   audioDuration: number | null;
 }
 
-export function FilePicker({ onFileSelected, isLoading, error, fileName, audioDuration }: FilePickerProps) {
+export function FilePicker({ onFileSelected, isLoading, loadingStatus, error, fileName, audioDuration }: FilePickerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -41,7 +42,7 @@ export function FilePicker({ onFileSelected, isLoading, error, fileName, audioDu
           onChange={handleChange}
         />
         {isLoading ? (
-          <p className="text-gray-500">Decoding audio…</p>
+          <p className="text-gray-500">{loadingStatus ?? 'Processing…'}</p>
         ) : fileName ? (
           <div>
             <p className="font-medium text-gray-800 truncate">{fileName}</p>
